@@ -32,14 +32,21 @@ View submission in MongoDB: va-onboarding collection, ID: 4t-ABC-2024-10-31
 ### Step 2: Review Submission in MongoDB
 
 1. Open MongoDB Compass (or use CLI/Atlas web interface)
-2. Connect to database
+2. Connect to database: `4trades-voice-onboarding`
 3. Navigate to `va-onboarding` collection
 4. Find document by `submissionId: "4t-ABC-2024-10-31"`
 5. Review all information:
+   - userId (reference to users collection)
    - businessProfile (name, industry, phone, email, address, hours)
    - voiceAgentConfig (agent name, personality, greeting, collection fields, emergency)
    - emailConfig (where to send summaries)
-6. Verify completeness and accuracy
+   - behaviorTracking (optional - shows how long user spent, when they started, etc.)
+6. **Get business owner contact info:**
+   - Copy the `userId` from the submission
+   - Go to `users` collection
+   - Find user by `_id: userId`
+   - Get name, email, phone from users document
+7. Verify completeness and accuracy
 
 ### Step 3: Generate Business ID
 
@@ -119,9 +126,9 @@ Create new directory: `/ahca-server/configs/businesses/{businessId}/`
       "sunday": "{from submission: businessProfile.hours.sunday}"
     },
     "emergencyContact": {
-      "available": true,
-      "phone": "{from submission: voiceAgentConfig.emergencyHandling.forwardToNumber}",
-      "instructions": "Press # for emergency or time-sensitive issues"
+      "available": "{from submission: voiceAgentConfig.emergencyHandling.enabled}",
+      "phone": "{from submission: voiceAgentConfig.emergencyHandling.forwardToNumber (if enabled)}",
+      "instructions": "{if enabled: 'Press # for emergency or time-sensitive issues', else: null}"
     }
   },
   
@@ -141,12 +148,14 @@ Create new directory: `/ahca-server/configs/businesses/{businessId}/`
   "twilio": {
     "note": "Twilio number assigned: {Twilio number}",
     "emergencyHandling": {
-      "enabled": true,
-      "trigger": "user presses # or mentions emergency",
-      "action": "Route to emergency handler function"
+      "enabled": "{from submission: voiceAgentConfig.emergencyHandling.enabled}",
+      "trigger": "{if enabled: based on triggerMethod from submission}",
+      "action": "{if enabled: 'Route to emergency handler function', else: 'Not configured'}"
     }
   }
 }
+
+**Note**: If emergencyHandling.enabled is false, omit emergency-related text from greeting and prompt_rules.json
 ```
 
 #### Create `prompt_rules.json`
@@ -155,7 +164,7 @@ Create new directory: `/ahca-server/configs/businesses/{businessId}/`
 ```json
 {
   "realtimeSystem": {
-    "full": "You are {voiceAgentConfig.agentName}, {businessProfile.businessName}'s {voiceAgentConfig.agentPersonality} virtual assistant. Your role is to collect customer information and handle emergency routing.\n\n{businessProfile.businessName} Services:\n{list services here}\n\nYour Capabilities:\n- Collect customer {list collectionFields}\n- Handle emergency situations by routing to on-call team\n- Provide basic company information\n- Take messages for team follow-up\n- Handle interruptions gracefully\n\nCRITICAL EMERGENCY HANDLING:\n- ONLY if user presses the # key, connect to on-call team right away\n- DO NOT assume emergency based on words like 'urgent', 'emergency', or 'time-sensitive'\n- Emergency response (ONLY for # key): \"I understand this is urgent. Let me connect you with our on-call team right away.\"\n\nCRITICAL INFORMATION COLLECTION:\n- ALWAYS collect reason first: \"What are you calling about?\"\n- Then collect name: \"Could I get your name?\"\n- Confirm name: \"Thanks — I heard you say your name is [name], is that right?\"\n- Then collect phone: \"What's the best phone number to reach you at?\"\n{if email enabled: \"- Then collect email: 'Do you have an email address?'\"}\n{if urgency enabled: \"- Ask about urgency: 'Would you like us to call you back on the next business day?'\"}\n- After collecting all info, provide FINAL CONFIRMATION\n- NEVER use placeholder names, phone numbers, or information\n\nGuidelines:\n- Be {voiceAgentConfig.agentPersonality}, courteous, and efficient\n- Keep responses concise and focused\n- Stay on script for consistency\n- Don't attempt to schedule appointments\n- For complex questions, note them for team follow-up\n- Allow customers to correct information\n\nOpening behavior:\n- ALWAYS start with this EXACT greeting on first turn: \"{voiceAgentConfig.greeting}\"\n\nImportant: Parts of calls may be recorded to improve service."
+    "full": "You are {voiceAgentConfig.agentName}, {businessProfile.businessName}'s {voiceAgentConfig.agentPersonality} virtual assistant. Your role is to collect customer information{if emergencyHandling.enabled: ' and handle emergency routing'}.\n\n{businessProfile.businessName} Services:\n{list services here}\n\nYour Capabilities:\n- Collect customer {list collectionFields}\n{if emergencyHandling.enabled: '- Handle emergency situations by routing to on-call team'}\n- Provide basic company information\n- Take messages for team follow-up\n- Handle interruptions gracefully\n\n{if emergencyHandling.enabled:\nCRITICAL EMERGENCY HANDLING:\n- ONLY if user presses the # key, connect to on-call team right away\n- DO NOT assume emergency based on words like 'urgent', 'emergency', or 'time-sensitive'\n- Emergency response (ONLY for # key): \"I understand this is urgent. Let me connect you with our on-call team right away.\"\n}\n\nCRITICAL INFORMATION COLLECTION:\n- ALWAYS collect reason first: \"What are you calling about?\"\n- Then collect name: \"Could I get your name?\"\n- Confirm name: \"Thanks — I heard you say your name is [name], is that right?\"\n- Then collect phone: \"What's the best phone number to reach you at?\"\n{if email enabled: \"- Then collect email: 'Do you have an email address?'\"}\n{if urgency enabled: \"- Ask about urgency: 'Would you like us to call you back on the next business day?'\"}\n- After collecting all info, provide FINAL CONFIRMATION\n- NEVER use placeholder names, phone numbers, or information\n\nGuidelines:\n- Be {voiceAgentConfig.agentPersonality}, courteous, and efficient\n- Keep responses concise and focused\n- Stay on script for consistency\n- Don't attempt to schedule appointments\n- For complex questions, note them for team follow-up\n- Allow customers to correct information\n\nOpening behavior:\n- ALWAYS start with greeting: \"{voiceAgentConfig.greeting}\"\n{if emergencyHandling.enabled: '- Mention emergency option in greeting'}\n{if !emergencyHandling.enabled: '- No emergency handling - proceed directly to information collection'}\n\nImportant: Parts of calls may be recorded to improve service."
   },
   
   "userInfoCollection": {
@@ -178,6 +187,7 @@ Create new directory: `/ahca-server/configs/businesses/{businessId}/`
     "outputFormat": "Return ONLY a JSON object like: {\"name\": \"[ACTUAL_NAME]\", \"phone\": \"[ACTUAL_PHONE]\", \"reason\": \"[ACTUAL_REASON]\"}"
   },
   
+  {if emergencyHandling.enabled:
   "emergencyHandling": {
     "systemPrompt": "You are handling emergency situations for {businessProfile.businessName}. Respond immediately and route to on-call team.",
     "rules": [
@@ -186,7 +196,10 @@ Create new directory: `/ahca-server/configs/businesses/{businessId}/`
       "Don't collect additional information during emergencies"
     ]
   }
+  }
 }
+
+**Note**: Omit the emergencyHandling section entirely if voiceAgentConfig.emergencyHandling.enabled is false
 ```
 
 ### Step 5: Buy Twilio Number
@@ -245,10 +258,12 @@ Add the new phone number mapping:
    - Verify greeting plays correctly (agent name, business name)
    - Verify business name is mentioned correctly
 
-2. **Test Emergency Forwarding**
-   - Call again and press # key
-   - Should forward to business's emergency number
-   - Hang up after connection confirmed
+2. **Test Emergency Forwarding (if enabled)**
+   - If `emergencyHandling.enabled` is true:
+     - Call again and press # key
+     - Should forward to business's emergency number
+     - Hang up after connection confirmed
+   - If disabled, skip this test
 
 3. **Test Full Call Flow**
    - Call again and complete full flow:
@@ -280,7 +295,7 @@ Add the new phone number mapping:
    The voice agent will:
    - Answer calls with your custom greeting
    - Collect [list collection fields]
-   - Forward emergencies to [emergency number] when callers press #
+   {if emergency enabled: '- Forward emergencies to [emergency number] when callers press #'}
    - Send you email summaries at [email address]
    
    Test it out by calling your new number!
@@ -318,7 +333,8 @@ Add the new phone number mapping:
 | `companyInfo.website` | `businessProfile.website` |
 | `companyInfo.address` | `businessProfile.address.*` |
 | `companyInfo.hours.*` | `businessProfile.hours.*` |
-| `companyInfo.emergencyContact.phone` | `voiceAgentConfig.emergencyHandling.forwardToNumber` |
+| `companyInfo.emergencyContact.available` | `voiceAgentConfig.emergencyHandling.enabled` |
+| `companyInfo.emergencyContact.phone` | `voiceAgentConfig.emergencyHandling.forwardToNumber` (only if enabled) |
 | `promptConfig.agentName` | `voiceAgentConfig.agentName` |
 | `promptConfig.agentPersonality` | `voiceAgentConfig.agentPersonality` |
 | `promptConfig.greeting` | `voiceAgentConfig.greeting` |
@@ -375,8 +391,34 @@ Add the new phone number mapping:
       "urgency": true
     },
     "emergencyHandling": {
-      "enabled": true,
+      "enabled": true,                    // User enabled emergency forwarding
       "forwardToNumber": "+15035555678"
+    }
+  }
+}
+```
+
+#### Example Submission (Emergency Disabled)
+```json
+{
+  "submissionId": "4t-XYZ-2024-11-01",
+  "businessProfile": {
+    "businessName": "Quick Repairs Co",
+    "industry": "Handyman"
+  },
+  "voiceAgentConfig": {
+    "agentName": "Tom",
+    "agentPersonality": "friendly",
+    "greeting": "Hi, this is Tom from Quick Repairs. How can I help you?",
+    "collectionFields": {
+      "name": true,
+      "phone": true,
+      "reason": true
+    },
+    "emergencyHandling": {
+      "enabled": false,                   // User disabled emergency forwarding
+      "forwardToNumber": null,            // Not collected
+      "triggerMethod": null
     }
   },
   "emailConfig": {
@@ -435,7 +477,7 @@ joes-hvac
 }
 ```
 
-**`/ahca-server/configs/businesses/joes-hvac/prompt_rules.json`**
+**`/ahca-server/configs/businesses/joes-hvac/prompt_rules.json`** (Emergency Enabled)
 ```json
 {
   "realtimeSystem": {
@@ -443,6 +485,17 @@ joes-hvac
   }
 }
 ```
+
+**Alternative: No Emergency Forwarding**
+```json
+{
+  "realtimeSystem": {
+    "full": "You are Tom, Quick Repairs Co's friendly virtual assistant. Your role is to collect customer information.\n\nYour Capabilities:\n- Collect customer name, phone, and reason for call\n- Provide basic company information\n- Take messages for team follow-up\n\nCRITICAL INFORMATION COLLECTION:\n- ALWAYS collect reason first\n- Then collect name\n- Then collect phone\n- Provide FINAL CONFIRMATION\n\nOpening behavior:\n- ALWAYS start with: 'Hi, this is Tom from Quick Repairs. How can I help you?'"
+  }
+}
+```
+
+**Note**: When emergency forwarding is disabled, omit all emergency-related text from the prompt.
 
 **Updated `/ahca-server/configs/businesses.json`**
 ```json
@@ -481,9 +534,11 @@ After deployment, test the following:
 - Check ahca-server logs
 
 ### Emergency Forwarding Not Working
-- Verify `emergencyContact.phone` in config.json
+- First check if emergency forwarding is enabled in config.json (`emergencyContact.available: true`)
+- If enabled, verify `emergencyContact.phone` in config.json
 - Check Twilio webhook configuration
 - Test with pound key, not keywords
+- If emergency forwarding is disabled, this is expected behavior
 
 ### Email Not Received
 - Check `email.fromEmail` in config.json
@@ -522,13 +577,67 @@ If deployment has issues:
 
 ## Quick Reference Commands
 
-### MongoDB Query to Find Submission
+### MongoDB Queries
+
+#### Find Submission
 ```javascript
-// MongoDB Compass or CLI
+// Find by submission ID
 db.getCollection('va-onboarding').findOne({ submissionId: "4t-ABC-2024-10-31" })
 
 // To find all submitted (not draft)
-db.getCollection('va-onboarding').find({ isSubmitted: true, status: "submitted" }).sort({ submittedAt: -1 })
+db.getCollection('va-onboarding').find({ 
+  isSubmitted: true, 
+  status: "submitted" 
+}).sort({ submittedAt: -1 })
+
+// Get submission with user info (join)
+db.getCollection('va-onboarding').aggregate([
+  { $match: { submissionId: "4t-ABC-2024-10-31" } },
+  {
+    $lookup: {
+      from: "users",
+      localField: "userId",
+      foreignField: "_id",
+      as: "ownerInfo"
+    }
+  },
+  { $unwind: "$ownerInfo" },
+  {
+    $project: {
+      submissionId: 1,
+      businessProfile: 1,
+      voiceAgentConfig: 1,
+      emailConfig: 1,
+      "ownerInfo.name": 1,
+      "ownerInfo.email": 1,
+      "ownerInfo.phone": 1,
+      submittedAt: 1,
+      behaviorTracking: 1
+    }
+  }
+])
+```
+
+#### Analytics Queries (Optional)
+```javascript
+// See where users drop off
+db['va-onboarding'].aggregate([
+  { $match: { isSubmitted: false } },
+  { $group: { _id: "$currentStep", count: { $sum: 1 } } },
+  { $sort: { count: -1 } }
+])
+
+// Average time to complete
+db['va-onboarding'].aggregate([
+  { $match: { isSubmitted: true } },
+  { 
+    $group: {
+      _id: null,
+      avgTime: { $avg: "$behaviorTracking.totalTimeSpentSeconds" },
+      completions: { $sum: 1 }
+    }
+  }
+])
 ```
 
 ### Create ahca-server Directory

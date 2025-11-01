@@ -58,8 +58,11 @@
 
 **Database**
 - MongoDB
-- Single collection: `va-onboarding`
-- Each document = one business submission (with progress tracking)
+- Two collections:
+  - `users` - Authentication data (credentials, profile)
+  - `va-onboarding` - Onboarding submissions (references users)
+- Each onboarding document = one business submission with progress tracking
+- Indexes for performance and constraints
 
 **Design System**
 - Colors: zinc-900 (dark), zinc-100 (light) only
@@ -97,47 +100,76 @@ The voice agent businesses get will work like Superior Fencing's agent:
 
 ### Features
 - Basic information collection (name, phone, email, reason for call)
-- Emergency call handling (press # to forward to business)
+- **Emergency call handling (OPTIONAL)** - business can enable/disable
+  - If enabled: press # to forward to business
+  - If disabled: no emergency forwarding, standard flow only
 - Email summaries after each call
 - No RAG (knowledge base)
 - No appointment booking
 
 ### Conversation Flow
 1. **Greeting**: "Thanks for calling [Business Name], I'm [Agent Name], the AI assistant..."
-2. **Emergency handling**: "If this is an emergency, press the pound key..."
+2. **Emergency handling** (only if enabled): "If this is an emergency, press the pound key..."
 3. **Reason collection**: "What are you calling about?"
 4. **Name collection**: "Could I get your name?"
-5. **Phone collection**: "What's the best phone number to reach you at?"
-6. **Email collection** (optional): "Do you have an email address?"
+5. **Phone collection** (if enabled): "What's the best phone number to reach you at?"
+6. **Email collection** (if enabled): "Do you have an email address?"
 7. **Urgency**: "Would you like us to call you back on the next business day?"
 8. **Confirmation**: Confirm all collected details
 9. **Closing**: "Thank you, our team will get back to you..."
+
+**Note**: Steps 2, 5 and 6 are conditional based on business owner's choices during onboarding.
 
 ---
 
 ## Database Schema
 
-### Collection: `va-onboarding`
+### Collection: `users` (Authentication)
 
 ```typescript
 {
   _id: ObjectId,
   
+  // Authentication
+  email: string,                     // unique, used for login
+  password: string,                  // hashed with bcrypt
+  
+  // Profile
+  name: string,
+  phone: string,
+  
+  // Metadata
+  role: string,                      // "business_owner" (for future: "admin")
+  emailVerified: boolean,            // for future email verification
+  createdAt: Date,
+  updatedAt: Date,
+  lastLoginAt: Date | null
+}
+```
+
+**Indexes:**
+```javascript
+db.users.createIndex({ email: 1 }, { unique: true })
+```
+
+---
+
+### Collection: `va-onboarding` (Business Submissions)
+
+```typescript
+{
+  _id: ObjectId,
+  
+  // User Reference (IMPORTANT: References users collection)
+  userId: ObjectId,                  // References users._id
+  
   // Submission metadata
-  submissionId: string,              // e.g., "vsop-001-2024-10-31"
+  submissionId: string,              // e.g., "4t-ABC-2024-10-31", unique
   status: string,                    // "draft", "submitted"
   isSubmitted: boolean,              // false = draft, true = submitted
   submittedAt: Date | null,
   currentStep: number,               // 1-6, tracks progress for save & continue
   lastSavedAt: Date,
-  
-  // Business owner info
-  businessOwner: {
-    name: string,
-    email: string,
-    phone: string,
-    password: string                 // hashed
-  },
   
   // Business profile
   businessProfile: {
@@ -180,11 +212,11 @@ The voice agent businesses get will work like Superior Fencing's agent:
       }>
     },
     
-    // Emergency handling
+    // Emergency handling (OPTIONAL - user can disable)
     emergencyHandling: {
-      enabled: boolean,
-      forwardToNumber: string,       // phone number to forward emergencies
-      triggerMethod: string          // "pound_key" or "keyword"
+      enabled: boolean,              // user choice: enable or disable
+      forwardToNumber: string | null, // only required if enabled=true
+      triggerMethod: string | null   // "pound_key" or "keyword", only if enabled=true
     }
   },
   
@@ -202,30 +234,79 @@ The voice agent businesses get will work like Superior Fencing's agent:
     mailchimpCampaignId: string | null
   },
   
+  // User behavior tracking (for analytics)
+  behaviorTracking: {
+    submissionStarted: Date,         // When user first started onboarding
+    submissionCompleted: Date | null, // When user completed submission
+    stepEvents: Array<{
+      step: number,                  // 1-6
+      action: string,                // "entered", "saved", "abandoned"
+      timestamp: Date,
+      timeSpentSeconds: number | null
+    }>,
+    totalTimeSpentSeconds: number,   // Total time from start to submit
+    numberOfSessions: number,        // How many times user logged in to work on this
+    lastActiveAt: Date
+  },
+  
   // Timestamps
   createdAt: Date,
   updatedAt: Date
 }
 ```
 
-### Example Document
+**Indexes:**
+```javascript
+// Ensure one active draft per user
+db['va-onboarding'].createIndex(
+  { userId: 1, isSubmitted: 1 }, 
+  { 
+    unique: true, 
+    partialFilterExpression: { isSubmitted: false },
+    name: "one_draft_per_user"
+  }
+)
 
+// For quick lookups
+db['va-onboarding'].createIndex({ submissionId: 1 }, { unique: true })
+db['va-onboarding'].createIndex({ userId: 1 })
+db['va-onboarding'].createIndex({ status: 1, submittedAt: -1 })
+```
+
+**Index Explanation:**
+- `{ userId: 1, isSubmitted: 1 }` with `partialFilterExpression` ensures only ONE draft (isSubmitted: false) per user
+- If user tries to create another draft while one exists, MongoDB will throw duplicate key error
+- Once submitted (isSubmitted: true), user can theoretically submit another (for future multi-business support)
+
+### Example Documents
+
+#### users Collection Example
 ```json
 {
   "_id": "672345abcdef123456789012",
-  "submissionId": "vsop-001-2024-10-31",
+  "email": "joe@joeshvac.com",
+  "password": "$2b$10$abcdefghijklmnopqrstuvwxyz",
+  "name": "Joe Smith",
+  "phone": "+15035551234",
+  "role": "business_owner",
+  "emailVerified": false,
+  "createdAt": "2024-10-31T10:00:00Z",
+  "updatedAt": "2024-10-31T10:30:00Z",
+  "lastLoginAt": "2024-10-31T10:29:00Z"
+}
+```
+
+#### va-onboarding Collection Example
+```json
+{
+  "_id": "672345ffffffffff123456789",
+  "userId": "672345abcdef123456789012",
+  "submissionId": "4t-ABC-2024-10-31",
   "status": "submitted",
   "isSubmitted": true,
   "submittedAt": "2024-10-31T10:30:00Z",
   "currentStep": 6,
   "lastSavedAt": "2024-10-31T10:30:00Z",
-  
-  "businessOwner": {
-    "name": "Joe Smith",
-    "email": "joe@joeshvac.com",
-    "phone": "+15035551234",
-    "password": "$2b$10$..."
-  },
   
   "businessProfile": {
     "businessName": "Joe's HVAC",
@@ -266,9 +347,52 @@ The voice agent businesses get will work like Superior Fencing's agent:
       ]
     },
     "emergencyHandling": {
-      "enabled": true,
+      "enabled": true,                    // User opted IN to emergency forwarding
       "forwardToNumber": "+15035555678",
       "triggerMethod": "pound_key"
+    }
+  },
+  
+  "emailConfig": {
+    "recipientEmail": "joe@joeshvac.com",
+    "summaryEnabled": true
+  }
+}
+```
+
+#### Example Document (Emergency Forwarding Disabled)
+```json
+{
+  "_id": "672345gggggggg123456789",
+  "userId": "672345abcdef123456789012",
+  "submissionId": "4t-DEF-2024-11-01",
+  "status": "submitted",
+  "isSubmitted": true,
+  "submittedAt": "2024-11-01T14:00:00Z",
+  "currentStep": 6,
+  
+  "businessProfile": {
+    "businessName": "Smith's Plumbing",
+    "industry": "Plumbing",
+    "phone": "+15035556789",
+    "email": "contact@smithsplumbing.com"
+  },
+  
+  "voiceAgentConfig": {
+    "agentName": "Sarah",
+    "agentPersonality": "friendly",
+    "greeting": "Hi, thanks for calling Smith's Plumbing, I'm Sarah. How can I help you today?",
+    "collectionFields": {
+      "name": true,
+      "phone": true,
+      "email": false,
+      "reason": true,
+      "urgency": true
+    },
+    "emergencyHandling": {
+      "enabled": false,                   // User opted OUT of emergency forwarding
+      "forwardToNumber": null,            // Not collected
+      "triggerMethod": null               // Not collected
     }
   },
   
@@ -282,6 +406,40 @@ The voice agent businesses get will work like Superior Fencing's agent:
     "sentAt": "2024-10-31T10:30:05Z",
     "sentTo": "doug@sherpaprompt.com",
     "mailchimpCampaignId": "mc_12345"
+  },
+  
+  "behaviorTracking": {
+    "submissionStarted": "2024-10-31T10:00:00Z",
+    "submissionCompleted": "2024-10-31T10:30:00Z",
+    "stepEvents": [
+      {
+        "step": 1,
+        "action": "entered",
+        "timestamp": "2024-10-31T10:00:00Z",
+        "timeSpentSeconds": null
+      },
+      {
+        "step": 1,
+        "action": "saved",
+        "timestamp": "2024-10-31T10:05:00Z",
+        "timeSpentSeconds": 300
+      },
+      {
+        "step": 2,
+        "action": "entered",
+        "timestamp": "2024-10-31T10:05:00Z",
+        "timeSpentSeconds": null
+      },
+      {
+        "step": 2,
+        "action": "saved",
+        "timestamp": "2024-10-31T10:10:00Z",
+        "timeSpentSeconds": 300
+      }
+    ],
+    "totalTimeSpentSeconds": 1800,
+    "numberOfSessions": 1,
+    "lastActiveAt": "2024-10-31T10:30:00Z"
   },
   
   "createdAt": "2024-10-31T10:00:00Z",
@@ -300,17 +458,23 @@ The voice agent businesses get will work like Superior Fencing's agent:
 ### Authentication
 
 ```typescript
-POST /auth/register
+POST /auth/signup
 Body: {
   name: string,
-  email: string,
-  password: string,
+  email: string,        // must be unique
+  password: string,     // min 8 chars
   phone: string
 }
 Response: {
   token: string,
-  user: { id, name, email }
+  user: { 
+    id: ObjectId, 
+    name: string, 
+    email: string,
+    phone: string
+  }
 }
+Note: Creates user in 'users' collection
 
 POST /auth/login
 Body: {
@@ -319,13 +483,24 @@ Body: {
 }
 Response: {
   token: string,
-  user: { id, name, email }
+  user: { 
+    id: ObjectId, 
+    name: string, 
+    email: string 
+  }
 }
+Note: Updates lastLoginAt in 'users' collection
 
 GET /auth/me
 Headers: { Authorization: "Bearer <token>" }
 Response: {
-  user: { id, name, email }
+  user: { 
+    id: ObjectId, 
+    name: string, 
+    email: string, 
+    phone: string,
+    createdAt: Date
+  }
 }
 ```
 
@@ -339,13 +514,24 @@ Body: {
   currentStep: number,              // 1-6
   businessProfile: {...},           // partial or complete
   voiceAgentConfig: {...},         // partial or complete
-  emailConfig: {...}               // partial or complete
+  emailConfig: {...},              // partial or complete
+  stepEvent: {                     // Track behavior
+    step: number,
+    action: "saved",
+    timeSpentSeconds: number
+  }
 }
 Response: {
   success: boolean,
   message: "Progress saved",
-  currentStep: number
+  currentStep: number,
+  lastSavedAt: Date,               // For localStorage comparison
+  submissionId: string             // For reference
 }
+Note: 
+- MongoDB unique index ensures only ONE draft per userId
+- Updates behaviorTracking.stepEvents and behaviorTracking.lastActiveAt
+- If user has existing draft, updates it; otherwise creates new draft
 
 // Get user's draft/submission
 GET /onboarding/my-submission
@@ -354,8 +540,26 @@ Response: {
   submission: {...},               // full submission object
   status: "draft" | "submitted",
   currentStep: number,             // where they left off
-  isSubmitted: boolean
+  isSubmitted: boolean,
+  lastSavedAt: Date,               // For localStorage comparison
+  hasLocalChanges: boolean         // Computed by comparing timestamps
 }
+Note: Returns user's ONLY draft (if exists) or their submitted submission
+
+// Sync local backup with server
+POST /onboarding/sync
+Headers: { Authorization: "Bearer <token>" }
+Body: {
+  localData: {...},                // Data from localStorage
+  localLastSavedAt: Date           // Timestamp from localStorage
+}
+Response: {
+  action: "use_server" | "use_local" | "conflict",
+  serverData: {...},               // Server's version
+  serverLastSavedAt: Date,
+  recommendation: string
+}
+Note: Compares timestamps, returns which version to use
 
 // Final submission (triggers admin email)
 POST /onboarding/submit
@@ -370,6 +574,11 @@ Response: {
   submissionId: string,
   message: "Your info has been successfully submitted. Admin will review and contact you soon."
 }
+Note: 
+- Marks draft as submitted (isSubmitted: true)
+- Logs submissionCompleted in behaviorTracking
+- Calculates totalTimeSpentSeconds
+- Sends email to Doug via Mailchimp
 ```
 
 ### Internal Endpoints (for future admin tools if needed)
@@ -493,7 +702,9 @@ src/
 │
 └── hooks/
     ├── useAuth.js                       # Auth hook
-    └── useOnboarding.js                 # Onboarding state + save/restore
+    ├── useOnboarding.js                 # Onboarding state + save/restore
+    ├── useLocalBackup.js                # localStorage backup/restore logic
+    └── useBehaviorTracking.js           # Track time spent, step events
 ```
 
 ### Multi-Step Onboarding Form
@@ -551,19 +762,50 @@ The onboarding form has 6 steps:
 </CollectionFieldsStep>
 ```
 
-#### Step 4: Emergency Handling
+#### Step 4: Emergency Handling (Optional)
 ```jsx
 <EmergencyHandlingStep>
-  <Toggle label="Enable emergency call forwarding" />
+  <Card className="bg-zinc-100 text-zinc-900">
+    <h3>Emergency Call Forwarding (Optional)</h3>
+    <p className="text-sm text-zinc-600 mb-4">
+      Allow customers to be forwarded to you immediately for urgent issues
+    </p>
+    
+    <Toggle 
+      label="Enable emergency call forwarding" 
+      checked={emergencyEnabled}
+      onChange={setEmergencyEnabled}
+    />
+  </Card>
   
   {emergencyEnabled && (
-    <>
-      <Input label="Forward emergencies to" type="tel" required />
-      <RadioGroup label="Emergency trigger">
-        <Radio value="pound_key" label="Customer presses # key" />
-        <Radio value="keyword" label="Customer says 'emergency'" />
+    <Card className="bg-zinc-100 text-zinc-900 mt-4">
+      <Input 
+        label="Forward emergencies to" 
+        type="tel" 
+        required 
+        placeholder="(555) 123-4567"
+        description="Phone number to receive emergency calls"
+      />
+      <RadioGroup label="How should emergencies be triggered?">
+        <Radio 
+          value="pound_key" 
+          label="Customer presses # key (recommended)" 
+          description="Customer hears option to press # for emergency"
+        />
+        <Radio 
+          value="keyword" 
+          label="Customer says 'emergency'" 
+          description="AI detects emergency keywords"
+        />
       </RadioGroup>
-    </>
+    </Card>
+  )}
+  
+  {!emergencyEnabled && (
+    <p className="text-sm text-zinc-600 mt-4">
+      Emergency forwarding is disabled. All calls will follow standard information collection.
+    </p>
   )}
   
   <Button>Continue</Button>
@@ -635,10 +877,12 @@ src/
 │   ├── onboarding.controller.ts
 │   ├── onboarding.service.ts
 │   ├── schemas/
-│   │   └── onboarding.schema.ts         # Mongoose schema
+│   │   ├── user.schema.ts               # User/auth schema
+│   │   └── onboarding.schema.ts         # Onboarding submission schema
 │   └── dto/
 │       ├── save-progress.dto.ts
-│       └── submit.dto.ts
+│       ├── submit.dto.ts
+│       └── sync.dto.ts                  # For localStorage sync
 │
 ├── notifications/
 │   ├── notifications.module.ts
@@ -669,70 +913,217 @@ src/
 @Injectable()
 export class OnboardingService {
   constructor(
+    @InjectModel('User') private userModel: Model<UserDocument>,
     @InjectModel('Onboarding') private onboardingModel: Model<OnboardingDocument>,
     private notificationsService: NotificationsService
   ) {}
 
   // Save progress (can call multiple times before submit)
-  async saveProgress(userId: string, data: SaveProgressDto) {
+  async saveProgress(userId: ObjectId, data: SaveProgressDto) {
+    const now = new Date();
+    
+    try {
+      // Try to find existing draft
+      let submission = await this.onboardingModel.findOne({ 
+        userId,
+        isSubmitted: false 
+      });
+      
+      if (!submission) {
+        // Create new draft - MongoDB index ensures only one draft per user
+        submission = new this.onboardingModel({
+          submissionId: this.generateSubmissionId(),
+          userId,
+          status: 'draft',
+          isSubmitted: false,
+          currentStep: data.currentStep,
+          lastSavedAt: now,
+          behaviorTracking: {
+            submissionStarted: now,
+            submissionCompleted: null,
+            stepEvents: [{
+              step: data.currentStep,
+              action: 'entered',
+              timestamp: now,
+              timeSpentSeconds: null
+            }],
+            totalTimeSpentSeconds: 0,
+            numberOfSessions: 1,
+            lastActiveAt: now
+          },
+          ...data
+        });
+      } else {
+        // Update existing draft
+        Object.assign(submission, data);
+        submission.currentStep = data.currentStep;
+        submission.lastSavedAt = now;
+        
+        // Track behavior
+        submission.behaviorTracking.lastActiveAt = now;
+        if (data.stepEvent) {
+          submission.behaviorTracking.stepEvents.push({
+            step: data.stepEvent.step,
+            action: data.stepEvent.action,
+            timestamp: now,
+            timeSpentSeconds: data.stepEvent.timeSpentSeconds
+          });
+        }
+      }
+      
+      await submission.save();
+      
+      return { 
+        success: true, 
+        currentStep: submission.currentStep,
+        lastSavedAt: submission.lastSavedAt,
+        submissionId: submission.submissionId
+      };
+      
+    } catch (error) {
+      // Handle duplicate key error from MongoDB index
+      if (error.code === 11000) {
+        // Should not happen, but handle gracefully
+        const existing = await this.onboardingModel.findOne({ 
+          userId, 
+          isSubmitted: false 
+        });
+        if (existing) {
+          // Update the existing one
+          Object.assign(existing, data);
+          existing.currentStep = data.currentStep;
+          existing.lastSavedAt = now;
+          await existing.save();
+          return { 
+            success: true, 
+            currentStep: existing.currentStep,
+            lastSavedAt: existing.lastSavedAt,
+            submissionId: existing.submissionId
+          };
+        }
+      }
+      throw error;
+    }
+  }
+
+  // Get user's submission (draft or submitted)
+  async getUserSubmission(userId: ObjectId) {
+    // Find draft first, if not found, find submitted
     let submission = await this.onboardingModel.findOne({ 
-      businessOwner: userId,
+      userId,
       isSubmitted: false 
     });
     
     if (!submission) {
-      // Create new draft
-      submission = new this.onboardingModel({
-        submissionId: this.generateSubmissionId(),
-        status: 'draft',
-        isSubmitted: false,
-        currentStep: data.currentStep,
-        businessOwner: userId,
-        lastSavedAt: new Date(),
-        ...data
+      submission = await this.onboardingModel.findOne({ 
+        userId,
+        isSubmitted: true 
       });
-    } else {
-      // Update existing draft
-      Object.assign(submission, data);
-      submission.currentStep = data.currentStep;
-      submission.lastSavedAt = new Date();
     }
     
-    await submission.save();
-    return { success: true, currentStep: submission.currentStep };
+    return submission;
   }
 
-  // Get user's submission (draft or submitted)
-  async getUserSubmission(userId: string) {
-    return this.onboardingModel.findOne({ businessOwner: userId });
+  // Sync local backup with server (resolve conflicts)
+  async syncLocalBackup(userId: ObjectId, syncDto: SyncDto) {
+    const serverSubmission = await this.onboardingModel.findOne({ 
+      userId,
+      isSubmitted: false 
+    });
+    
+    if (!serverSubmission) {
+      // No server draft, use local
+      return {
+        action: 'use_local',
+        serverData: null,
+        serverLastSavedAt: null,
+        recommendation: 'No server draft found. Use local data.'
+      };
+    }
+    
+    const serverTime = serverSubmission.lastSavedAt.getTime();
+    const localTime = new Date(syncDto.localLastSavedAt).getTime();
+    
+    if (serverTime > localTime) {
+      // Server is newer
+      return {
+        action: 'use_server',
+        serverData: serverSubmission,
+        serverLastSavedAt: serverSubmission.lastSavedAt,
+        recommendation: 'Server has newer data. Use server version.'
+      };
+    } else if (localTime > serverTime) {
+      // Local is newer (network issue probably)
+      return {
+        action: 'use_local',
+        serverData: serverSubmission,
+        serverLastSavedAt: serverSubmission.lastSavedAt,
+        recommendation: 'Local has newer data. You can restore from local backup.'
+      };
+    } else {
+      // Same timestamp
+      return {
+        action: 'use_server',
+        serverData: serverSubmission,
+        serverLastSavedAt: serverSubmission.lastSavedAt,
+        recommendation: 'Data is in sync.'
+      };
+    }
   }
 
   // Final submission - sends email to Doug
-  async submitOnboarding(userId: string, data: SubmitDto) {
+  async submitOnboarding(userId: ObjectId, data: SubmitDto) {
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    
     let submission = await this.onboardingModel.findOne({ 
-      businessOwner: userId 
+      userId,
+      isSubmitted: false 
     });
     
     if (!submission) {
       submission = new this.onboardingModel({
         submissionId: this.generateSubmissionId(),
-        businessOwner: userId
+        userId,
+        behaviorTracking: {
+          submissionStarted: new Date(),
+          submissionCompleted: null,
+          stepEvents: [],
+          totalTimeSpentSeconds: 0,
+          numberOfSessions: 1,
+          lastActiveAt: new Date()
+        }
       });
     }
+    
+    const now = new Date();
+    
+    // Calculate total time spent
+    const startTime = submission.behaviorTracking.submissionStarted.getTime();
+    const endTime = now.getTime();
+    const totalSeconds = Math.floor((endTime - startTime) / 1000);
     
     // Update with final data
     Object.assign(submission, data);
     submission.status = 'submitted';
     submission.isSubmitted = true;
-    submission.submittedAt = new Date();
+    submission.submittedAt = now;
     submission.currentStep = 6;
+    
+    // Update behavior tracking
+    submission.behaviorTracking.submissionCompleted = now;
+    submission.behaviorTracking.totalTimeSpentSeconds = totalSeconds;
+    submission.behaviorTracking.lastActiveAt = now;
     
     await submission.save();
     
     // Send email to Doug via Mailchimp
     const emailSent = await this.notificationsService.sendAdminNotification({
       businessName: submission.businessProfile.businessName,
-      businessEmail: submission.businessOwner.email,
+      businessEmail: user.email,
+      businessOwner: user.name,
       submissionId: submission.submissionId
     });
     
@@ -773,6 +1164,7 @@ export class NotificationsService {
   async sendAdminNotification(data: {
     businessName: string;
     businessEmail: string;
+    businessOwner: string;
     submissionId: string;
   }): Promise<boolean> {
     try {
@@ -783,10 +1175,16 @@ export class NotificationsService {
         html: `
           <h2>${data.businessName} Voice Agent Onboarding</h2>
           <p><strong>${data.businessName}</strong> has onboarded their business for the voice agent.</p>
+          <p><strong>Owner:</strong> ${data.businessOwner}</p>
           <p><strong>Contact:</strong> ${data.businessEmail}</p>
           <p><strong>Submission ID:</strong> ${data.submissionId}</p>
           <p><strong>Action Required:</strong> Please review and inform them.</p>
-          <p>View submission in MongoDB: <code>va-onboarding</code> collection, ID: <code>${data.submissionId}</code></p>
+          <p>View submission in MongoDB:</p>
+          <ul>
+            <li>Database: <code>4trades-voice-onboarding</code></li>
+            <li>Collection: <code>va-onboarding</code></li>
+            <li>Query: <code>{ submissionId: "${data.submissionId}" }</code></li>
+          </ul>
         `
       };
       
@@ -809,15 +1207,23 @@ export class NotificationsService {
 - [ ] Configure Tailwind with zinc-900/zinc-100 theme
 - [ ] Add Poppins font to project
 - [ ] Set up MongoDB connection in NestJS
-- [ ] Create Onboarding mongoose schema (with save progress fields)
+- [ ] Create User mongoose schema (users collection)
+- [ ] Create Onboarding mongoose schema (va-onboarding collection)
+- [ ] Create MongoDB indexes:
+  - [ ] users: email unique index
+  - [ ] va-onboarding: userId + isSubmitted partial unique index (one draft per user)
+  - [ ] va-onboarding: submissionId unique index
 - [ ] Implement JWT authentication
 
 ### Phase 2: Backend APIs
-- [ ] Auth endpoints (signup, login, me)
-- [ ] Onboarding save progress endpoint
-- [ ] Onboarding submit endpoint
+- [ ] Auth endpoints (signup, login, me) - uses users collection
+- [ ] Onboarding save progress endpoint with behavior tracking
+- [ ] Onboarding get submission endpoint
+- [ ] Onboarding sync endpoint (localStorage conflict resolution)
+- [ ] Onboarding submit endpoint with behavior tracking
 - [ ] Mailchimp integration for admin notifications
 - [ ] Utility endpoints (industries, personalities, generate greeting)
+- [ ] Error handling for duplicate draft (MongoDB index constraint)
 
 ### Phase 3: Frontend Core
 - [ ] Landing page with signup/login
@@ -833,6 +1239,16 @@ export class NotificationsService {
 - [ ] Save & Continue Later button (auto-save on each step)
 - [ ] Back button to edit previous steps
 - [ ] Final submit button
+- [ ] localStorage backup mechanism:
+  - [ ] Save form data to localStorage on every change
+  - [ ] Save lastSavedAt timestamp
+  - [ ] On page load, check server vs localStorage timestamps
+  - [ ] Show restore prompt if localStorage is newer
+  - [ ] Clear localStorage after successful submit
+- [ ] Behavior tracking:
+  - [ ] Track time spent on each step
+  - [ ] Log step entered/saved/abandoned events
+  - [ ] Send tracking data with save/submit requests
 
 ### Phase 5: Status Page
 - [ ] "Under review" status page
@@ -843,8 +1259,12 @@ export class NotificationsService {
 - [ ] Form validation with Zod
 - [ ] Save progress functionality
 - [ ] Restore progress on login
+- [ ] localStorage backup/restore flow
+- [ ] Test conflict resolution (server vs localStorage)
 - [ ] Submit triggers admin email
 - [ ] Toast notifications on actions
+- [ ] Test MongoDB index constraint (one draft per user)
+- [ ] Test behavior tracking data collection
 - [ ] End-to-end testing
 
 ### Phase 7: Polish
@@ -1070,10 +1490,10 @@ When admin deploys a business, they create files similar to superior-fencing:
 
 ## Development Timeline
 
-- **Week 1**: Backend (database, auth, save/submit APIs, Mailchimp)
-- **Week 2**: Frontend (signup/login, onboarding form with save/restore)
-- **Week 3**: Status page, polish zinc-900/100 theme, Poppins font
-- **Week 4**: Testing, bug fixes, deployment
+- **Week 1**: Backend (users collection, va-onboarding collection, indexes, auth, save/submit APIs with behavior tracking, Mailchimp)
+- **Week 2**: Frontend (signup/login, onboarding form with save/restore, localStorage backup)
+- **Week 3**: Status page, conflict resolution UI, polish zinc-900/100 theme, Poppins font
+- **Week 4**: Testing (behavior tracking, localStorage sync, MongoDB constraints), bug fixes, deployment
 
 ## Design Specifications
 
@@ -1114,6 +1534,215 @@ module.exports = {
     },
   },
 }
+```
+
+---
+
+## Local Backup Implementation
+
+### Frontend localStorage Strategy
+
+```typescript
+// lib/localStorage.js
+const LOCAL_BACKUP_KEY = '4trades-onboarding-backup';
+
+export const saveToLocalBackup = (data, currentStep) => {
+  const backup = {
+    data,
+    currentStep,
+    lastSavedAt: new Date().toISOString(),
+    version: '1.0'
+  };
+  localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(backup));
+};
+
+export const getLocalBackup = () => {
+  const backup = localStorage.getItem(LOCAL_BACKUP_KEY);
+  return backup ? JSON.parse(backup) : null;
+};
+
+export const clearLocalBackup = () => {
+  localStorage.removeItem(LOCAL_BACKUP_KEY);
+};
+
+export const compareWithServer = async (serverData, serverLastSavedAt) => {
+  const localBackup = getLocalBackup();
+  
+  if (!localBackup) {
+    return { useServer: true, reason: 'no_local_backup' };
+  }
+  
+  const localTime = new Date(localBackup.lastSavedAt).getTime();
+  const serverTime = new Date(serverLastSavedAt).getTime();
+  
+  if (localTime > serverTime) {
+    return { 
+      useServer: false, 
+      reason: 'local_newer',
+      timeDiff: (localTime - serverTime) / 1000 // seconds
+    };
+  }
+  
+  return { useServer: true, reason: 'server_newer_or_equal' };
+};
+```
+
+### useLocalBackup Hook
+
+```typescript
+// hooks/useLocalBackup.js
+import { useState, useEffect } from 'react';
+import { saveToLocalBackup, getLocalBackup, clearLocalBackup, compareWithServer } from '@/lib/localStorage';
+
+export const useLocalBackup = (serverData, serverLastSavedAt) => {
+  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
+  const [localBackup, setLocalBackup] = useState(null);
+  
+  useEffect(() => {
+    const checkBackup = async () => {
+      const backup = getLocalBackup();
+      if (!backup || !serverData) return;
+      
+      const comparison = await compareWithServer(serverData, serverLastSavedAt);
+      
+      if (!comparison.useServer && comparison.timeDiff > 5) {
+        // Local is newer by more than 5 seconds
+        setLocalBackup(backup);
+        setShowRestorePrompt(true);
+      }
+    };
+    
+    checkBackup();
+  }, [serverData, serverLastSavedAt]);
+  
+  const restoreFromLocal = () => {
+    setShowRestorePrompt(false);
+    return localBackup;
+  };
+  
+  const useServerData = () => {
+    setShowRestorePrompt(false);
+    clearLocalBackup();
+  };
+  
+  return {
+    showRestorePrompt,
+    localBackup,
+    restoreFromLocal,
+    useServerData,
+    saveToLocalBackup,
+    clearLocalBackup
+  };
+};
+```
+
+### Restore Prompt Component
+
+```jsx
+// components/onboarding/RestorePrompt.jsx
+export const RestorePrompt = ({ localTime, serverTime, onRestore, onUseServer }) => {
+  return (
+    <div className="fixed inset-0 bg-zinc-900/50 flex items-center justify-center z-50">
+      <Card className="bg-zinc-100 text-zinc-900 max-w-md p-6">
+        <h3 className="font-bold text-lg mb-4">Restore Local Changes?</h3>
+        <p className="mb-4">
+          We found unsaved changes from your last session that are newer than what's on the server.
+        </p>
+        <div className="text-sm text-zinc-600 mb-6">
+          <p>Local: {new Date(localTime).toLocaleString()}</p>
+          <p>Server: {new Date(serverTime).toLocaleString()}</p>
+        </div>
+        <div className="flex gap-4">
+          <Button onClick={onUseServer} variant="outline">
+            Use Server Version
+          </Button>
+          <Button onClick={onRestore} className="bg-zinc-900">
+            Restore Local Changes
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+};
+```
+
+---
+
+## Behavior Tracking & Analytics
+
+### What We Track
+
+1. **Submission Flow Events:**
+   - `submissionStarted` - When user begins onboarding
+   - `submissionCompleted` - When user submits final form
+   - `stepAbandoned` - When user leaves without saving
+
+2. **Step Events:**
+   - `entered` - User navigates to a step
+   - `saved` - User saves progress on a step
+   - Time spent on each step (in seconds)
+
+3. **Session Metrics:**
+   - Total time from start to completion
+   - Number of sessions (login count while working on draft)
+   - Last active timestamp
+
+### Analytics Queries (MongoDB)
+
+```javascript
+// Find submissions with high drop-off rate
+db['va-onboarding'].aggregate([
+  {
+    $match: { isSubmitted: false }
+  },
+  {
+    $group: {
+      _id: "$currentStep",
+      count: { $sum: 1 }
+    }
+  },
+  {
+    $sort: { count: -1 }
+  }
+])
+
+// Average time spent on each step
+db['va-onboarding'].aggregate([
+  {
+    $match: { isSubmitted: true }
+  },
+  {
+    $unwind: "$behaviorTracking.stepEvents"
+  },
+  {
+    $group: {
+      _id: "$behaviorTracking.stepEvents.step",
+      avgTime: { $avg: "$behaviorTracking.stepEvents.timeSpentSeconds" }
+    }
+  }
+])
+
+// Completion rate and average completion time
+db['va-onboarding'].aggregate([
+  {
+    $facet: {
+      completed: [
+        { $match: { isSubmitted: true } },
+        { $count: "count" },
+        {
+          $project: {
+            count: 1,
+            avgCompletionTime: { $avg: "$behaviorTracking.totalTimeSpentSeconds" }
+          }
+        }
+      ],
+      abandoned: [
+        { $match: { isSubmitted: false } },
+        { $count: "count" }
+      ]
+    }
+  }
+])
 ```
 
 ---
