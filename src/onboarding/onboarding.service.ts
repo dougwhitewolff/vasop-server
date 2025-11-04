@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
 import { Onboarding, OnboardingDocument } from '../schemas/onboarding.schema';
 import { EmailService } from '../services/email.service';
@@ -12,6 +13,7 @@ export class OnboardingService {
     @InjectModel(Onboarding.name)
     private onboardingModel: Model<OnboardingDocument>,
     private emailService: EmailService,
+    private configService: ConfigService,
   ) {}
 
   /**
@@ -235,7 +237,7 @@ export class OnboardingService {
       submission.adminNotification = {
         emailSent: emailResult.success,
         sentAt: new Date(),
-        sentTo: 'doug@sherpaprompt.com',
+        sentTo: this.configService.get<string>('ADMIN_EMAIL'),
         mailchimpCampaignId: emailResult.campaignId || null,
       } as any;
 
@@ -245,7 +247,7 @@ export class OnboardingService {
       submission.adminNotification = {
         emailSent: false,
         sentAt: new Date(),
-        sentTo: 'doug@sherpaprompt.com',
+        sentTo: this.configService.get<string>('ADMIN_EMAIL'),
         mailchimpCampaignId: null,
       } as any;
       await submission.save();

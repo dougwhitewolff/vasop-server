@@ -20,7 +20,9 @@ export class OnboardingController {
 
   @Get('my-submission')
   async getMySubmission(@Req() req: Request & { user: any }) {
-    return this.onboardingService.getUserSubmission(req.user.userId);
+    const result = await this.onboardingService.getUserSubmission(req.user.userId);
+    // Return empty object instead of null to prevent JSON parsing error
+    return result || {};
   }
 
   @Post('submit')

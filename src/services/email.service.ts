@@ -22,8 +22,7 @@ export class EmailService {
       'MAILCHIMP_AUDIENCE_ID',
     ) || '';
     this.adminEmail =
-      this.configService.get<string>('ADMIN_EMAIL') ||
-      'doug@sherpaprompt.com';
+      this.configService.get<string>('ADMIN_EMAIL') || 'azmain@sherpaprompt.com';
 
     if (this.mailchimpApiKey && this.mailchimpServerPrefix) {
       this.isInitialized = true;
@@ -254,8 +253,8 @@ Expected Setup Time: 2-3 business days
         },
         settings: {
           subject_line: customSubject,
-          from_name: '4Trades Voice Agent Onboarding',
-          reply_to: 'noreply@4trades.com',
+          from_name: '4Trades Onboarding',
+          reply_to: userInfo.email, // Use recipient's own email for reply_to
           title: `Notification - ${Date.now()}`,
         },
       };
