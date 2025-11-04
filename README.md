@@ -456,7 +456,7 @@ constructor(private configService: ConfigService) {
   this.mailchimpApiKey = configService.get('MAILCHIMP_API_KEY');
   this.mailchimpServerPrefix = configService.get('MAILCHIMP_SERVER_PREFIX');
   this.mailchimpAudienceId = configService.get('MAILCHIMP_AUDIENCE_ID');
-  this.adminEmail = configService.get('ADMIN_EMAIL');
+  this.adminEmail = configService.get('ADMIN_EMAIL') || 'admin@4trades.com';
 }
 ```
 
@@ -490,7 +490,7 @@ constructor(private configService: ConfigService) {
 - MongoDB query to view full submission
 - Expected timeline
 
-**Recipient**: Configured admin email (default: doug@sherpaprompt.com)
+**Recipient**: Configured via `ADMIN_EMAIL` environment variable
 
 ---
 
