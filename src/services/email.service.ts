@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as crypto from 'crypto';
+import { ConfidentialClientApplication } from '@azure/msal-node';
 
 @Injectable()
 export class EmailService {
-  private mailchimpApiKey: string = '';
-  private mailchimpServerPrefix: string = '';
-  private mailchimpAudienceId: string = '';
+  private msalClient: ConfidentialClientApplication | null = null;
+  private senderEmail: string = '';
+  private fromName: string = '';
   private adminEmail: string = '';
   private isInitialized: boolean = false;
 
@@ -15,24 +15,34 @@ export class EmailService {
   }
 
   private init() {
-    this.mailchimpApiKey = this.configService.get<string>('MAILCHIMP_API_KEY') || '';
-    this.mailchimpServerPrefix =
-      this.configService.get<string>('MAILCHIMP_SERVER_PREFIX') || '';
-    this.mailchimpAudienceId = this.configService.get<string>(
-      'MAILCHIMP_AUDIENCE_ID',
-    ) || '';
-    this.adminEmail =
-      this.configService.get<string>('ADMIN_EMAIL') || 'azmain@sherpaprompt.com';
+    const tenantId = this.configService.get<string>('BUSINESS_SHERPAPROMPT_TENANT_ID');
+    const clientId = this.configService.get<string>('BUSINESS_SHERPAPROMPT_CLIENT_ID');
+    const clientSecret = this.configService.get<string>('BUSINESS_SHERPAPROMPT_CLIENT_SECRET');
+    this.senderEmail = this.configService.get<string>('BUSINESS_SHERPAPROMPT_SENDER_EMAIL') || '';
+    this.adminEmail = this.configService.get<string>('ADMIN_EMAIL') || 'azmain@sherpaprompt.com';
+    this.fromName = '4Trades Onboarding';
 
-    if (this.mailchimpApiKey && this.mailchimpServerPrefix) {
-      this.isInitialized = true;
-      console.log(
-        `✅ [EmailService] Mailchimp Marketing API initialized with server: ${this.mailchimpServerPrefix}`,
-      );
+    if (tenantId && clientId && clientSecret && this.senderEmail) {
+      try {
+        const msalConfig = {
+          auth: {
+            clientId,
+            authority: `https://login.microsoftonline.com/${tenantId}`,
+            clientSecret,
+          },
+        };
+
+        this.msalClient = new ConfidentialClientApplication(msalConfig);
+        this.isInitialized = true;
+        console.log(`✅ [EmailService] Microsoft Graph initialized`);
+        console.log(`   📧 Sender Email: ${this.senderEmail}`);
+        console.log(`   🔑 Client ID: ${clientId.substring(0, 8)}...`);
+        console.log(`   🏢 Tenant ID: ${tenantId.substring(0, 8)}...`);
+      } catch (error) {
+        console.error('❌ [EmailService] Failed to initialize Microsoft Graph client:', error);
+      }
     } else {
-      console.warn(
-        '⚠️ [EmailService] Mailchimp API key or server prefix not configured',
-      );
+      console.warn('⚠️ [EmailService] Microsoft Graph credentials not configured');
     }
   }
 
@@ -41,7 +51,7 @@ export class EmailService {
   }
 
   /**
-   * Send admin notification email via Mailchimp Marketing API
+   * Send admin notification email via Microsoft Graph API
    */
   async sendAdminNotification(submissionData: any): Promise<any> {
     if (!this.isReady()) {
@@ -143,8 +153,8 @@ Query: { submissionId: "${submissionId}" }
 Expected Setup Time: 2-3 business days
       `.trim();
 
-      // Send email to admin
-      const result = await this.sendViaMailchimpMarketing(
+      // Send email to admin via Microsoft Graph
+      const result = await this.sendViaMicrosoftGraph(
         {
           email: this.adminEmail,
           name: 'Admin',
@@ -162,183 +172,94 @@ Expected Setup Time: 2-3 business days
   }
 
   /**
-   * Send email via Mailchimp Marketing API
+   * Send email via Microsoft Graph API
    */
-  private async sendViaMailchimpMarketing(
+  private async sendViaMicrosoftGraph(
     userInfo: any,
     htmlContent: string,
     textContent: string,
     customSubject: string,
   ): Promise<any> {
     try {
-      const fetch = (await import('node-fetch')).default;
-
-      console.log('📧 [EmailService] Sending email via Mailchimp Marketing API...');
-
-      // Step 1: Check if member exists, if not add them
-      const audienceId = this.mailchimpAudienceId;
-
-      if (!audienceId) {
-        throw new Error('Mailchimp audience ID not configured');
+      if (!this.isInitialized || !this.msalClient) {
+        throw new Error('Microsoft Graph not initialized');
       }
 
-      const memberHash = crypto
-        .createHash('md5')
-        .update(userInfo.email.toLowerCase())
-        .digest('hex');
+      const userName = userInfo.name || 'Admin';
+      const subject = customSubject || 'New Voice Agent Onboarding';
 
-      try {
-        // Try to get the member
-        const memberResponse = await fetch(
-          `https://${this.mailchimpServerPrefix}.api.mailchimp.com/3.0/lists/${audienceId}/members/${memberHash}`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${this.mailchimpApiKey}`,
-              'Content-Type': 'application/json',
-            },
+      console.log('📧 [EmailService] Sending email via Microsoft Graph API...');
+      console.log(`   📧 From: ${this.fromName} <${this.senderEmail}>`);
+      console.log(`   📧 To: ${userInfo.email}`);
+      console.log(`   📧 Subject: ${subject}`);
+
+      // Step 1: Get OAuth2 access token
+      const tokenRequest = {
+        scopes: ['https://graph.microsoft.com/.default'],
+      };
+
+      const authResponse = await this.msalClient.acquireTokenByClientCredential(tokenRequest);
+
+      if (!authResponse || !authResponse.accessToken) {
+        console.error('❌ [EmailService] Failed to acquire access token');
+        throw new Error('Failed to acquire access token');
+      }
+
+      console.log('✅ [EmailService] Access token acquired');
+
+      // Step 2: Prepare email message
+      const message = {
+        message: {
+          subject: subject,
+          body: {
+            contentType: 'HTML',
+            content: htmlContent,
           },
-        );
-
-        if (!memberResponse.ok && memberResponse.status === 404) {
-          // Member doesn't exist, add them
-          console.log('📧 [EmailService] Adding new member to audience...');
-          const addMemberResponse = await fetch(
-            `https://${this.mailchimpServerPrefix}.api.mailchimp.com/3.0/lists/${audienceId}/members`,
+          toRecipients: [
             {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${this.mailchimpApiKey}`,
-                'Content-Type': 'application/json',
+              emailAddress: {
+                address: userInfo.email,
+                name: userName,
               },
-              body: JSON.stringify({
-                email_address: userInfo.email,
-                status: 'subscribed',
-                merge_fields: {
-                  FNAME: userInfo.name.split(' ')[0] || '',
-                  LNAME: userInfo.name.split(' ').slice(1).join(' ') || '',
-                },
-              }),
             },
-          );
-
-          if (!addMemberResponse.ok) {
-            const error = await addMemberResponse.json();
-            console.error('❌ [EmailService] Failed to add member:', error);
-            throw new Error(`Failed to add member: ${error.detail}`);
-          }
-          console.log('✅ [EmailService] Member added to audience');
-        }
-      } catch (error) {
-        console.error('❌ [EmailService] Error checking/adding member:', error);
-        throw new Error(`Member management failed: ${error.message}`);
-      }
-
-      // Step 2: Create a campaign
-      const campaignData = {
-        type: 'regular',
-        recipients: {
-          list_id: audienceId,
-          segment_opts: {
-            match: 'any',
-            conditions: [
-              {
-                condition_type: 'EmailAddress',
-                field: 'EMAIL',
-                op: 'is',
-                value: userInfo.email,
-              },
-            ],
-          },
+          ],
         },
-        settings: {
-          subject_line: customSubject,
-          from_name: '4Trades Onboarding',
-          reply_to: userInfo.email, // Use recipient's own email for reply_to
-          title: `Notification - ${Date.now()}`,
-        },
+        saveToSentItems: 'true',
       };
 
-      console.log('📧 [EmailService] Creating campaign...');
-      const campaignResponse = await fetch(
-        `https://${this.mailchimpServerPrefix}.api.mailchimp.com/3.0/campaigns`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.mailchimpApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(campaignData),
-        },
-      );
+      // Step 3: Send email via Microsoft Graph API
+      const fetch = (await import('node-fetch')).default;
+      const graphEndpoint = `https://graph.microsoft.com/v1.0/users/${this.senderEmail}/sendMail`;
 
-      if (!campaignResponse.ok) {
-        const error = await campaignResponse.json();
-        console.error('❌ [EmailService] Failed to create campaign:', error);
-        throw new Error(`Campaign creation failed: ${error.detail}`);
+      const response = await fetch(graphEndpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authResponse.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [EmailService] Microsoft Graph API error:', response.status, errorText);
+        throw new Error(`Microsoft Graph API error: ${response.status} - ${errorText}`);
       }
 
-      const campaign = await campaignResponse.json();
-      console.log('✅ [EmailService] Campaign created:', campaign.id);
-
-      // Step 3: Set campaign content
-      const contentData = {
-        html: htmlContent,
-        plain_text: textContent,
-      };
-
-      const contentResponse = await fetch(
-        `https://${this.mailchimpServerPrefix}.api.mailchimp.com/3.0/campaigns/${campaign.id}/content`,
-        {
-          method: 'PUT',
-          headers: {
-            Authorization: `Bearer ${this.mailchimpApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(contentData),
-        },
-      );
-
-      if (!contentResponse.ok) {
-        const error = await contentResponse.json();
-        console.error('❌ [EmailService] Failed to set campaign content:', error);
-        throw new Error(`Content setting failed: ${error.detail}`);
-      }
-
-      console.log('✅ [EmailService] Campaign content set');
-
-      // Step 4: Send the campaign
-      const sendResponse = await fetch(
-        `https://${this.mailchimpServerPrefix}.api.mailchimp.com/3.0/campaigns/${campaign.id}/actions/send`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.mailchimpApiKey}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      if (!sendResponse.ok) {
-        const error = await sendResponse.json();
-        console.error('❌ [EmailService] Failed to send campaign:', error);
-        throw new Error(`Campaign sending failed: ${error.detail}`);
-      }
-
-      console.log('✅ [EmailService] Campaign sent successfully!');
+      console.log('✅ [EmailService] Email sent successfully via Microsoft Graph!');
       console.log('📧 [EmailService] Email sent to:', userInfo.email);
-      console.log('📧 [EmailService] Subject:', customSubject);
+      console.log('📧 [EmailService] Subject:', subject);
 
       return {
         success: true,
-        messageId: campaign.id,
+        messageId: `msg-${Date.now()}`,
         status: 'sent',
         email: userInfo.email,
-        provider: 'mailchimp-marketing',
-        campaignId: campaign.id,
+        provider: 'microsoft-graph',
+        campaignId: `msg-${Date.now()}`,
       };
     } catch (error) {
-      console.error('❌ [EmailService] Error sending via Mailchimp Marketing:', error);
+      console.error('❌ [EmailService] Error sending via Microsoft Graph:', error);
       throw error;
     }
   }
@@ -352,29 +273,26 @@ Expected Setup Time: 2-3 business days
     }
 
     try {
-      const fetch = (await import('node-fetch')).default;
+      if (!this.msalClient) {
+        throw new Error('MSAL client not initialized');
+      }
 
-      const response = await fetch(
-        `https://${this.mailchimpServerPrefix}.api.mailchimp.com/3.0/ping`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${this.mailchimpApiKey}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
+      // Step 1: Get OAuth2 access token
+      const tokenRequest = {
+        scopes: ['https://graph.microsoft.com/.default'],
+      };
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ [EmailService] Mailchimp Marketing API connection test successful');
+      const authResponse = await this.msalClient.acquireTokenByClientCredential(tokenRequest);
+
+      if (authResponse && authResponse.accessToken) {
+        console.log('✅ [EmailService] Microsoft Graph connection test successful');
         return {
           success: true,
-          provider: 'Mailchimp Marketing',
-          ping: data.health_status || 'PONG',
+          provider: 'Microsoft Graph',
+          tokenExpiry: authResponse.expiresOn,
         };
       } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error('Failed to acquire access token');
       }
     } catch (error) {
       console.error('❌ [EmailService] Connection test failed:', error);

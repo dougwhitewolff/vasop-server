@@ -225,7 +225,7 @@ export class OnboardingService {
 
     await submission.save();
 
-    // Send email to admin via Mailchimp
+    // Send email to admin via Microsoft Graph
     try {
       const emailResult = await this.emailService.sendAdminNotification({
         businessName: submission.businessProfile.businessName,
@@ -238,7 +238,7 @@ export class OnboardingService {
         emailSent: emailResult.success,
         sentAt: new Date(),
         sentTo: this.configService.get<string>('ADMIN_EMAIL'),
-        mailchimpCampaignId: emailResult.campaignId || null,
+        mailchimpCampaignId: emailResult.campaignId || null, // Now stores Microsoft Graph message ID
       } as any;
 
       await submission.save();

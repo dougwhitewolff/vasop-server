@@ -1,12 +1,12 @@
 # 4Trades Voice Agent Onboarding - Backend
 
-A robust NestJS API server for managing trade business onboarding to the AI voice agent platform, with MongoDB storage and Mailchimp email notifications.
+A robust NestJS API server for managing trade business onboarding to the AI voice agent platform, with MongoDB storage and Microsoft Graph email notifications.
 
 ## 🎯 Features
 
 - **JWT Authentication**: Secure user signup and login
 - **MongoDB Integration**: Mongoose ODM for data persistence
-- **Email Notifications**: Mailchimp Marketing API for admin alerts
+- **Email Notifications**: Microsoft Graph API for admin alerts
 - **Draft Auto-Save**: Real-time progress tracking
 - **Submission Management**: Complete onboarding workflow
 - **Behavior Tracking**: User interaction analytics
@@ -18,7 +18,7 @@ A robust NestJS API server for managing trade business onboarding to the AI voic
 - **Framework**: NestJS (TypeScript)
 - **Database**: MongoDB with Mongoose
 - **Authentication**: JWT (Passport-JWT)
-- **Email**: Mailchimp Marketing API
+- **Email**: Microsoft Graph API
 - **Validation**: class-validator + class-transformer
 - **Security**: Bcrypt for password hashing
 - **HTTP Client**: node-fetch
@@ -27,7 +27,7 @@ A robust NestJS API server for managing trade business onboarding to the AI voic
 
 - Node.js 18+ and npm
 - MongoDB (local or Atlas)
-- Mailchimp account with Marketing API access
+- Microsoft 365 account with Azure AD application configured
 
 ## 🚀 Getting Started
 
@@ -58,10 +58,11 @@ JWT_EXPIRES_IN=7d
 # CORS
 FRONTEND_URL=http://localhost:3000
 
-# Mailchimp Marketing API
-MAILCHIMP_API_KEY=your-mailchimp-api-key-us12
-MAILCHIMP_SERVER_PREFIX=us12
-MAILCHIMP_AUDIENCE_ID=your-audience-id
+# Microsoft Graph API (for email notifications)
+BUSINESS_SHERPAPROMPT_TENANT_ID=your-azure-tenant-id
+BUSINESS_SHERPAPROMPT_CLIENT_ID=your-azure-client-id
+BUSINESS_SHERPAPROMPT_CLIENT_SECRET=your-azure-client-secret
+BUSINESS_SHERPAPROMPT_SENDER_EMAIL=sender@yourdomain.com
 
 # Admin
 ADMIN_EMAIL=doug@sherpaprompt.com
@@ -372,7 +373,7 @@ Content-Type: application/json
 2. Sets `isSubmitted: true`
 3. Records submission timestamp
 4. Calculates total time spent
-5. **Sends email to admin via Mailchimp**
+5. **Sends email to admin via Microsoft Graph**
 6. Records email notification details
 
 ---
@@ -445,39 +446,42 @@ Content-Type: application/json
 
 ## 📧 Email Service
 
-### Mailchimp Marketing API Integration
+### Microsoft Graph API Integration
 
-The `EmailService` uses Mailchimp Marketing API (not Transactional) to send notifications.
+The `EmailService` uses Microsoft Graph API to send email notifications via Azure AD authentication.
 
 #### Initialization
 
 ```typescript
 constructor(private configService: ConfigService) {
-  this.mailchimpApiKey = configService.get('MAILCHIMP_API_KEY');
-  this.mailchimpServerPrefix = configService.get('MAILCHIMP_SERVER_PREFIX');
-  this.mailchimpAudienceId = configService.get('MAILCHIMP_AUDIENCE_ID');
-  this.adminEmail = configService.get('ADMIN_EMAIL') || 'admin@4trades.com';
+  const tenantId = configService.get('BUSINESS_SHERPAPROMPT_TENANT_ID');
+  const clientId = configService.get('BUSINESS_SHERPAPROMPT_CLIENT_ID');
+  const clientSecret = configService.get('BUSINESS_SHERPAPROMPT_CLIENT_SECRET');
+  this.senderEmail = configService.get('BUSINESS_SHERPAPROMPT_SENDER_EMAIL');
+  this.adminEmail = configService.get('ADMIN_EMAIL');
+  
+  // Initialize MSAL client for OAuth2 authentication
+  this.msalClient = new ConfidentialClientApplication({
+    auth: { clientId, authority, clientSecret }
+  });
 }
 ```
 
 #### Send Flow
 
-1. **Check if recipient exists in audience**
-   - GET `/3.0/lists/{audienceId}/members/{hash}`
+1. **Acquire OAuth2 access token**
+   - Uses client credentials flow
+   - Scopes: `https://graph.microsoft.com/.default`
 
-2. **Add recipient if needed**
-   - POST `/3.0/lists/{audienceId}/members`
+2. **Prepare email message**
+   - HTML content
+   - Recipients list
+   - Subject line
 
-3. **Create campaign**
-   - POST `/3.0/campaigns`
-   - Segment: Only send to specific email
-
-4. **Set campaign content**
-   - PUT `/3.0/campaigns/{campaignId}/content`
-   - HTML + Plain text versions
-
-5. **Send campaign**
-   - POST `/3.0/campaigns/{campaignId}/actions/send`
+3. **Send email via Microsoft Graph**
+   - POST `/v1.0/users/{senderEmail}/sendMail`
+   - Authorization: Bearer token
+   - Saves to sent items
 
 #### Admin Email Content
 
@@ -722,7 +726,7 @@ docker run -p 3001:3001 --env-file .env vasop-server
 
 - [ ] Set strong `JWT_SECRET`
 - [ ] Use MongoDB Atlas (not local)
-- [ ] Configure Mailchimp API
+- [ ] Configure Microsoft Graph API (Azure AD application)
 - [ ] Set `NODE_ENV=production`
 - [ ] Update `FRONTEND_URL` to production domain
 - [ ] Enable HTTPS
@@ -760,10 +764,11 @@ docker run -p 3001:3001 --env-file .env vasop-server
 **Error**: Email notification fails
 
 **Solutions**:
-- Verify Mailchimp API key is valid
-- Check `MAILCHIMP_SERVER_PREFIX` matches API key suffix
-- Verify `MAILCHIMP_AUDIENCE_ID` exists
-- Check Mailchimp account status
+- Verify Azure AD application credentials are correct
+- Check `BUSINESS_SHERPAPROMPT_TENANT_ID`, `BUSINESS_SHERPAPROMPT_CLIENT_ID`, and `BUSINESS_SHERPAPROMPT_CLIENT_SECRET`
+- Verify `BUSINESS_SHERPAPROMPT_SENDER_EMAIL` has proper permissions in Microsoft 365
+- Ensure Azure AD app has `Mail.Send` permission granted
+- Check sender email mailbox is active and accessible
 - Review server logs for detailed error
 
 ### Port Already in Use
@@ -836,7 +841,7 @@ Monitor MongoDB:
 - [NestJS Documentation](https://docs.nestjs.com)
 - [Mongoose Documentation](https://mongoosejs.com/docs)
 - [Passport-JWT](http://www.passportjs.org/packages/passport-jwt/)
-- [Mailchimp Marketing API](https://mailchimp.com/developer/marketing/)
+- [Microsoft Graph API](https://docs.microsoft.com/en-us/graph/)
 - [MongoDB Documentation](https://docs.mongodb.com)
 
 ## 📞 Support
