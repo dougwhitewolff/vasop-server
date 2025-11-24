@@ -101,6 +101,9 @@ export class VoiceAgentConfig {
   @Prop()
   greeting: string;
 
+  @Prop({ default: 'ash' })
+  voice: string;
+
   @Prop({ type: CollectionFields })
   collectionFields: CollectionFields;
 

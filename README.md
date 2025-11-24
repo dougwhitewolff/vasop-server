@@ -64,6 +64,9 @@ BUSINESS_SHERPAPROMPT_CLIENT_ID=your-azure-client-id
 BUSINESS_SHERPAPROMPT_CLIENT_SECRET=your-azure-client-secret
 BUSINESS_SHERPAPROMPT_SENDER_EMAIL=sender@yourdomain.com
 
+# OpenAI API (for voice preview TTS)
+OPENAI_API_KEY=your-openai-api-key
+
 # Admin
 ADMIN_EMAIL=doug@sherpaprompt.com
 ```

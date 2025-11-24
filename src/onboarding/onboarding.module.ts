@@ -4,6 +4,7 @@ import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
 import { Onboarding, OnboardingSchema } from '../schemas/onboarding.schema';
 import { EmailService } from '../services/email.service';
+import { TtsService } from '../services/tts.service';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
@@ -14,7 +15,7 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule,
   ],
   controllers: [OnboardingController],
-  providers: [OnboardingService, EmailService],
+  providers: [OnboardingService, EmailService, TtsService],
 })
 export class OnboardingModule {}
 
