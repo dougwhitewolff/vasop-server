@@ -20,7 +20,7 @@ export class EmailService {
     const clientSecret = this.configService.get<string>('BUSINESS_SHERPAPROMPT_CLIENT_SECRET');
     this.senderEmail = this.configService.get<string>('BUSINESS_SHERPAPROMPT_SENDER_EMAIL') || '';
     this.adminEmail = this.configService.get<string>('ADMIN_EMAIL') || 'azmain@sherpaprompt.com';
-    this.fromName = '4Trades Onboarding';
+    this.fromName = '4Trades.ai Onboarding';
 
     if (tenantId && clientId && clientSecret && this.senderEmail) {
       try {
@@ -82,7 +82,7 @@ export class EmailService {
 </head>
 <body>
     <div class="header">
-        <div class="logo">🤖 4Trades Voice Agent Onboarding</div>
+        <div class="logo">🤖 4Trades.ai Voice Agent Onboarding</div>
         <p>New Business Submission</p>
     </div>
     
@@ -126,7 +126,7 @@ export class EmailService {
       `.trim();
 
       const textContent = `
-4Trades Voice Agent Onboarding - New Business Submission
+4Trades.ai Voice Agent Onboarding - New Business Submission
 
 New Onboarding Submission
 
