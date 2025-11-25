@@ -7,6 +7,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { User, UserSchema } from '../schemas/user.schema';
+import { Otp, OtpSchema } from '../schemas/otp.schema';
+import { EmailService } from '../services/email.service';
 
 @Module({
   imports: [
@@ -24,10 +26,13 @@ import { User, UserSchema } from '../schemas/user.schema';
       },
       inject: [ConfigService],
     }),
-    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    MongooseModule.forFeature([
+      { name: User.name, schema: UserSchema },
+      { name: Otp.name, schema: OtpSchema },
+    ]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, EmailService],
   exports: [AuthService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}

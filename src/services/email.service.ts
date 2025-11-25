@@ -265,6 +265,109 @@ Expected Setup Time: 2-3 business days
   }
 
   /**
+   * Send password reset OTP email
+   */
+  async sendPasswordResetOTP(
+    email: string,
+    otp: string,
+    userName: string = '',
+  ): Promise<any> {
+    if (!this.isReady()) {
+      throw new Error('Email service not initialized');
+    }
+
+    try {
+      const displayName = userName || email;
+
+      // Create HTML content for OTP email
+      const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Password Reset Code</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #18181b; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { background-color: #f4f4f5; padding: 30px; border-radius: 0 0 8px 8px; }
+        .otp-box { background-color: white; padding: 30px; border-radius: 8px; margin: 25px 0; text-align: center; border: 2px solid #18181b; }
+        .otp-code { font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #18181b; font-family: monospace; }
+        .warning { background-color: #fef3c7; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f59e0b; }
+        .logo { font-size: 24px; font-weight: bold; }
+        .footer { text-align: center; margin-top: 20px; color: #71717a; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">🤖 4Trades.ai Voice Agent</div>
+        <p>Password Reset Request</p>
+    </div>
+    
+    <div class="content">
+        <h2>Hello ${displayName},</h2>
+        
+        <p>We received a request to reset the password for your account. Use the code below to reset your password:</p>
+        
+        <div class="otp-box">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #71717a;">Your Reset Code</p>
+            <div class="otp-code">${otp}</div>
+            <p style="margin: 10px 0 0 0; font-size: 14px; color: #71717a;">Valid for 15 minutes</p>
+        </div>
+        
+        <p>Enter this code on the password reset page to continue.</p>
+        
+        <div class="warning">
+            <strong>⚠️ Security Notice</strong><br>
+            If you didn't request a password reset, please ignore this email. Your password will remain unchanged.
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message from 4Trades.ai Voice Agent Onboarding.</p>
+            <p>© 2025 4Trades.ai. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+      `.trim();
+
+      const textContent = `
+4Trades.ai Voice Agent - Password Reset Request
+
+Hello ${displayName},
+
+We received a request to reset the password for your account. Use the code below to reset your password:
+
+Your Reset Code: ${otp}
+Valid for: 15 minutes
+
+Enter this code on the password reset page to continue.
+
+SECURITY NOTICE:
+If you didn't request a password reset, please ignore this email. Your password will remain unchanged.
+
+This is an automated message from 4Trades.ai Voice Agent Onboarding.
+© 2025 4Trades.ai. All rights reserved.
+      `.trim();
+
+      // Send email via Microsoft Graph
+      const result = await this.sendViaMicrosoftGraph(
+        {
+          email: email,
+          name: displayName,
+        },
+        htmlContent,
+        textContent,
+        'Your Password Reset Code',
+      );
+
+      return result;
+    } catch (error) {
+      console.error('❌ [EmailService] Error sending password reset OTP:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Test email service connectivity
    */
   async testConnection(): Promise<any> {
