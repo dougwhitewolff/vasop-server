@@ -71,13 +71,15 @@ export class AuthService {
     // Find user
     const user = await this.userModel.findOne({ email });
     if (!user) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(
+        'This email address is not registered. Please sign up to create an account.',
+      );
     }
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException('Invalid password. Please try again.');
     }
 
     // Update last login
@@ -132,12 +134,12 @@ export class AuthService {
     const user = await this.userModel.findOne({ email });
     if (!user) {
       // Don't reveal if user exists for security, but still return success
-    return {
-      success: true,
-      message:
-        'If an account exists with this email, you will receive a password reset code.',
-    };
-  }
+      return {
+        success: true,
+        message:
+          'If an account exists with this email, you will receive a password reset code.',
+      };
+    }
 
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -203,6 +205,14 @@ export class AuthService {
     const user = await this.userModel.findOne({ email });
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    // Check if new password is same as old password
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      throw new BadRequestException(
+        'New password cannot be the same as your current password. Please choose a different password.',
+      );
     }
 
     // Hash new password

@@ -60,5 +60,22 @@ export class OnboardingController {
       return res.status(500).json({ error: error.message || 'Failed to generate voice preview' });
     }
   }
+
+  @Public()
+  @Post('check-content')
+  async checkContent(@Body() body: { text: string }) {
+    try {
+      if (!body.text) {
+        return { isAppropriate: false, reason: 'Text is required' };
+      }
+
+      const result = await this.ttsService.checkContentModeration(body.text);
+      return result;
+    } catch (error) {
+      console.error('Content check error:', error);
+      // Fail open - allow content if check fails
+      return { isAppropriate: true };
+    }
+  }
 }
 
